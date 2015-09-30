@@ -1,0 +1,246 @@
+#!/usr/bin/env python3
+
+import argparse
+import os
+import socket
+import subprocess
+
+VERSION = "0.1"
+USER = os.getenv("LOGNAME")
+HOME = os.getenv("HOME")
+UID = os.getuid()
+GID = os.getgid()
+DIR = os.path.dirname(os.path.abspath(__file__))
+PRIVATE_KEY_FILE = HOME + "/.ssh/id_rsa.sandbox"
+SSH_HOST = "%s@127.0.0.1" %(USER)
+SSH_OPTS = "-i %s -o StrictHostKeyChecking=no " % (PRIVATE_KEY_FILE)
+SSH_OPTS += "-o NoHostAuthenticationForLocalhost=yes -o SendEnv=ENTRYPATH" 
+CONTAINER_HOME = "/home/%s" %(USER)
+ENTRYPATH = os.getenv("PWD")
+SANDBOX = ""
+SANDPIT = ""
+
+parser = argparse.ArgumentParser(add_help=False, epilog="See '%(prog)s help <command>' to read about a specific subcommand.")
+
+subparsers = parser.add_subparsers(dest='sub_command')
+
+buildparsers = subparsers.add_parser('build', description='Build description', help = "build base container")
+buildparsers.add_argument('image', help='Name of the base image', nargs='?', type = str, default = "base")
+buildparsers.add_argument('-a', '--apt', help='Apt packages to build with', metavar = "PACKAGES")
+#buildparsers.add_argument('-d', '--dist', help='Distribution to base on', type = str, default = "debian", choices = ["debian", "ubuntu"])
+
+newparsers = subparsers.add_parser('new', description='New description', help = "start a container on base image")
+newparsers.add_argument('image', help='Name of the base image')
+newparsers.add_argument('container', help='Name of the container')
+newparsers.add_argument('arguments', help='Arguments to run in the sandbox directly', nargs = argparse.REMAINDER)
+
+runparsers = subparsers.add_parser('run', description='Run description', help = "run a container")
+runparsers.add_argument('container', help='Name of the container')
+runparsers.add_argument('arguments', help='Arguments to run in the sandbox directly', nargs = argparse.REMAINDER)
+
+stopparsers = subparsers.add_parser('stop', description='Stop description', help = "stop a container")
+stopparsers.add_argument('container', help='Name of the container')
+
+removeparsers = subparsers.add_parser('remove', description='Remove description', help = "remove an image")
+removeparsers.add_argument('image', help='Name of the image')
+
+listparsers = subparsers.add_parser('list', description='List description', help = "list all images")
+
+saveparsers = subparsers.add_parser('save', description='Save description', help = "save a container")
+saveparsers.add_argument('container', help='Name of the container')
+saveparsers.add_argument('image', help='Name of the image')
+
+helpparsers = subparsers.add_parser('help', description='Help description', help = "display this page", add_help=False)
+helpparsers.add_argument('SUBCOMMAND', nargs='?', type = str, default = "NONE")
+
+args = parser.parse_args()
+
+def make_local_dir(path):
+	if not os.path.exists(path):
+		os.makedirs(path)
+
+def query(question, default="yes"):
+	valid = {"yes":True,   "y":True,  "ye":True, "no":False,     "n":False}
+	if default == None:
+		prompt = " [y/n] "
+	elif default == "yes":
+		prompt = " [Y/n] "
+	elif default == "no":
+		prompt = " [y/N] "
+	else:
+		raise ValueError("invalid default answer: '%s'" % default)
+
+	while True:
+		print(question + prompt, end = " ")
+		choice = input().lower()
+		if default is not None and choice == '':
+			return valid[default]
+		elif choice in valid:
+			return valid[choice]
+		else:
+			print("Please respond with 'yes' or 'no' (or 'y' or 'n').")
+
+def container_id():
+	try:
+		cmd = "docker inspect -f {{.Id}} %s 2> /dev/null" % SANDBOX
+		return subprocess.check_output(cmd, shell=True).decode().strip()
+	except:
+		return ""
+
+def container_port(int_port):
+	return int(subprocess.check_output("docker port %s %s" % (container_id(), int_port), shell = True).decode().split(":")[1])
+	
+def wait_for_ssh(addr, port):
+	buff = ""
+	while not buff.startswith('SSH'):
+		s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+		try:
+			s.connect((addr, port))
+		except ConnectionRefusedError:
+			continue
+		buff = s.recv(512).decode()
+
+def docker_save_container(container, image):
+	cmd = "docker commit %s sandbox:%s" % (container, image)
+	subprocess.call(cmd, shell = True)	
+
+def docker_remove_container(container):
+	cmd = "docker rm -v %s" %(container)
+	subprocess.call(cmd, shell = True)
+
+def docker_stop_and_remove_container(container):
+	subprocess.call("docker stop %s" % (container), shell = True)
+	subprocess.call("docker rm -v %s" % (container), shell = True)
+
+def sandbox_started():
+	try:
+		cmd = "docker inspect --format='{{.State.Running}}' %s 2> /dev/null" % SANDBOX
+		running = subprocess.check_output(cmd, shell = True).decode().strip()
+		if running:
+			return (running == "true")
+	except:
+		return False
+	return True
+
+def	sandbox_build_apt(basename='base'):
+	cmd = "docker run --name=sandbox_apt --entrypoint=apt-get sandbox:%s install --yes %s" % (basename, args.apt)
+	subprocess.call(cmd, shell = True)
+	docker_save_container('sandbox_apt', SANDPIT)
+	docker_remove_container('sandbox_apt')
+
+def sandbox_build_base(name='base', path='.'):
+	subprocess.call("docker build --rm -t sandbox:%s %s" % (name, path), shell = True)
+
+def sandbox_ssh(args = ""):
+	os.environ["ENTRYPATH"] = ENTRYPATH
+	return subprocess.call("ssh -Y -p %d %s %s %s" % (container_port(22), SSH_OPTS, SSH_HOST, args), shell = True)
+
+def sandbox_start():
+	if not os.path.exists("%s.pub" % (PRIVATE_KEY_FILE)):
+		subprocess.call("ssh-keygen -f %s -N ''" % (PRIVATE_KEY_FILE), shell = True)
+	make_local_dir("%s/Sandbox" % (HOME))
+	run_args = "-v %s.pub:%s/.ssh/authorized_keys:ro " % (PRIVATE_KEY_FILE, CONTAINER_HOME)
+	run_args += "-v %s/Sandbox:%s/Sandbox " % (HOME, HOME)
+	run_args += "--privileged "
+	run_args += "--detach "
+	run_args += "--publish-all "
+	run_args += "--hostname sandbox "
+	run_args += "--expose 22 "
+	run_args += "--entrypoint /usr/local/bin/start "
+	run_args += "--name %s sandbox:%s %s %s %s" % (SANDBOX, SANDPIT, UID, GID, USER)
+	subprocess.call("docker run %s" % (run_args), shell = True)
+
+def sandbox_command_build():
+	sandbox_build_base(path=DIR)
+	if args.apt != None:
+		sandbox_build_apt()
+	
+def sandbox_command_new():
+	if not sandbox_started():
+		sandbox_start()
+		wait_for_ssh("127.0.0.1", container_port(22))
+	sandbox_ssh()
+
+def sandbox_ssh():
+	arguments = ""
+	if "arguments" in args:
+		arguments = " ".join(args.arguments)
+	os.environ["ENTRYPATH"] = ENTRYPATH
+	return subprocess.call("ssh -Y -p %d %s %s %s" % (container_port(22), SSH_OPTS, SSH_HOST, arguments), shell = True)
+
+def sandbox_command_run():
+	if not sandbox_started():
+		print ("No such sandbox container: %s" % (SANDBOX))
+		exit()
+	sandbox_ssh()
+
+def sandbox_inspect_images():
+	cmd = "docker images | sed -n '/sandbox/s/ \+/ /gp' | cut -d ' ' -f 2"
+	return subprocess.check_output(cmd, shell = True).decode("utf-8").split()
+
+def sandbox_inspect_container(image):
+	cmd = "docker ps -a | sed -n '/sandbox:%s/s/ \+/ /gp' | rev | cut -d ' ' -f 2 | rev" % (image)
+	return subprocess.check_output(cmd, shell = True).decode("utf-8").split()
+
+
+def sandbox_command_list():
+	images = sandbox_inspect_images()
+	for image in images:
+		print ("\033[36m%s\033[m:" %(image) )
+		containers = sandbox_inspect_container(image)
+		for container in containers:
+			print ("  %s" %(container))
+
+def sandbox_command_save():
+	if query("It will save and remove the current container, are you sure you want to do that?"):
+		docker_save_container(SANDBOX, SANDPIT)
+		docker_stop_and_remove_container(SANDBOX)
+		sandbox_start()
+
+def sandbox_command_stop():
+	if sandbox_started():
+		docker_stop_and_remove_container(container_id())
+	else:
+		print ("Sandbox %s does not exist" %(SANDBOX))
+
+def sandbox_command_remove():
+	containers = sandbox_inspect_container(SANDPIT)
+	if containers:
+		if query("You need to remove all containers to do that, do you want to remove all containers?"):
+			for container in containers:
+				docker_stop_and_remove_container(container)
+		else:
+			exit()
+	if SANDPIT in sandbox_inspect_images():
+		if query("Do you want to remove the sandpit %s?" %(SANDPIT)):
+			subprocess.call("docker rmi sandbox:%s" % (SANDPIT), shell = True)
+	else:
+		print ("Sandpit image %s does not exist" %(SANDPIT))
+if __name__ == "__main__":
+	if "container" in args:
+		SANDBOX = args.container
+	if "image" in args:
+		SANDPIT = args.image
+	if args.sub_command == None:
+		parser.print_help()
+		exit()
+	elif args.sub_command == 'help':
+		if args.SUBCOMMAND != "NONE" and args.SUBCOMMAND != "help":
+			parser.parse_args([args.SUBCOMMAND, '--help'])
+		else:
+			parser.print_help()
+		exit()
+	elif args.sub_command == 'build':
+		sandbox_command_build()
+	elif args.sub_command == 'new':
+		sandbox_command_new()
+	elif args.sub_command == 'run':
+		sandbox_command_run()
+	elif args.sub_command == 'list':
+		sandbox_command_list()
+	elif args.sub_command == 'save':
+		sandbox_command_save()
+	elif args.sub_command == 'stop':
+		sandbox_command_stop()
+	elif args.sub_command == 'remove':
+		sandbox_command_remove()

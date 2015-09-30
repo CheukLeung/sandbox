@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+
+USER_ID="$1"
+USER_GROUP="$2"
+
+function set_timezone
+{
+	echo "Setting timezone..."
+	# Set correct timezone
+	echo "Europe/Stockholm" > /etc/timezone
+	dpkg-reconfigure -f noninteractive tzdata
+}
+
+function create_user
+{
+	echo "Creating user..."
+	# Create a group with a proper id, in case it doesn't exist
+	if ! cat /etc/group | grep ":$USER_GROUP:" > /dev/null 2>&1 ; then
+		groupadd -g $USER_GROUP developer
+	fi
+
+	# Create user
+	useradd -m -u $USER_ID -g $USER_GROUP -G fuse -s /bin/bash $USERNAME
+	echo "developer ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/developer
+
+	# Copy home folder files
+	cp -aR /mnt/home/developer /home/
+	chown -R $USER_ID:$USER_GROUP /home/$USERNAME
+}
+
+set_timezone
+create_user

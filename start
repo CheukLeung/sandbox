@@ -1,0 +1,31 @@
+#!/bin/bash
+USER_ID="$1"
+USER_GROUP="$2"
+USER_NAME="$3"
+
+echo "Creating user..."
+# Create a group with a proper id, in case it doesn't exist
+if ! cat /etc/group | grep ":$USER_GROUP:" > /dev/null 2>&1 ; then
+	groupadd -g $USER_GROUP $USER_NAME
+fi
+
+# Create user
+useradd -m -u $USER_ID -g $USER_GROUP -s /bin/bash $USER_NAME
+echo "$USER_NAME ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/$USER_NAME
+echo /etc/passwd
+# Copy home folder files
+mkdir -p /home/$USER_NAME/.ssh
+cp /etc/skel/profile /home/$USER_NAME/.profile
+cp /etc/skel/bashrc /home/$USER_NAME/.bashrc
+chown $USER_ID:$USER_GROUP /home/$USER_NAME
+chown $USER_ID:$USER_GROUP /home/$USER_NAME/.ssh
+chown $USER_ID:$USER_GROUP /home/$USER_NAME/.profile
+chown $USER_ID:$USER_GROUP /home/$USER_NAME/.bashrc
+
+# start ssh server
+echo "UseDNS no" >> /etc/ssh/sshd_config
+echo "PermitUserEnvironment yes" >> /etc/ssh/sshd_config
+echo "AcceptEnv ENTRYPATH" >> /etc/ssh/sshd_config
+mkdir -p /var/run/sshd
+/usr/sbin/sshd -D
+
