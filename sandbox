@@ -114,6 +114,8 @@ def docker_stop_and_remove_container(container):
 
 def sandbox_started():
 	try:
+		cmd = "docker start %s 2> /dev/null" % SANDBOX
+		subprocess.call(cmd, shell = True)
 		cmd = "docker inspect --format='{{.State.Running}}' %s 2> /dev/null" % SANDBOX
 		running = subprocess.check_output(cmd, shell = True).decode().strip()
 		if running:
