@@ -1,5 +1,5 @@
 FROM debian:stable
-MAINTAINER Cheuk Wing Leung "cheuk.wing.leung@external.atlascopco.com"
+MAINTAINER Cheuk Wing Leung "cwleung@kth.se"
 
 ENV DEBIAN_FRONTEND noninteractive
 
@@ -18,3 +18,4 @@ RUN ["dpkg-reconfigure", "-f", "noninteractive", "tzdata"]
 ADD start /usr/local/bin/
 ADD profile /etc/skel/
 ADD bashrc /etc/skel/
+

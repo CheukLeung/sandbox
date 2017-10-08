@@ -89,7 +89,7 @@ def container_id():
 
 def container_port(int_port):
 	return int(subprocess.check_output("docker port %s %s" % (container_id(), int_port), shell = True).decode().split(":")[1])
-	
+
 def wait_for_ssh(addr, port):
 	buff = ""
 	while not buff.startswith('SSH'):
@@ -102,7 +102,7 @@ def wait_for_ssh(addr, port):
 
 def docker_save_container(container, image):
 	cmd = "docker commit %s sandbox:%s" % (container, image)
-	subprocess.call(cmd, shell = True)	
+	subprocess.call(cmd, shell = True)
 
 def docker_remove_container(container):
 	cmd = "docker rm -v %s" %(container)
@@ -131,11 +131,7 @@ def	sandbox_build_apt(basename='base'):
 	docker_remove_container('sandbox_apt')
 
 def sandbox_build_base(name='base', path='.'):
-	subprocess.call("docker build --rm -t sandbox:%s %s" % (name, path), shell = True)
-
-def sandbox_ssh(args = ""):
-	os.environ["ENTRYPATH"] = ENTRYPATH
-	return subprocess.call("ssh -Y -p %d %s %s %s" % (container_port(22), SSH_OPTS, SSH_HOST, args), shell = True)
+	subprocess.call("docker build --no-cache --rm -t sandbox:%s %s" % (name, path), shell = True)
 
 def sandbox_start():
 	if not os.path.exists("%s.pub" % (PRIVATE_KEY_FILE)):
@@ -143,6 +139,34 @@ def sandbox_start():
 	make_local_dir("%s/Sandbox" % (HOME))
 	run_args = "-v %s.pub:%s/.ssh/authorized_keys:ro " % (PRIVATE_KEY_FILE, CONTAINER_HOME)
 	run_args += "-v %s/Sandbox:%s/Sandbox " % (HOME, HOME)
+	run_args += "-v %s/Repos:%s/Repos " % (HOME, HOME)
+	run_args += "-v /var/run/dbus/:/var/run/dbus/ "
+	run_args += "-v /tmp/.X11-unix:/tmp/.X11-unix:ro "
+	run_args += "-v %s/Downloads:%s/Downloads " % (HOME, HOME)
+	run_args += "-v %s/.config/google-chrome:%s/.config/google-chrome " % (HOME, HOME)
+	run_args += "-v %s/Workspaces/purple:%s/.purple " % (HOME, HOME)
+	run_args += "--device /dev/snd "
+	run_args += "--device /dev/dri "
+	run_args += "--device /dev/video0 "
+	run_args += "--device /dev/usb "
+	run_args += "--device /dev/bus/usb "
+	run_args += "--device /dev/nvidia0 "
+	run_args += "--device /dev/nvidiactl "
+	run_args += "--device /dev/nvidia-modeset "
+	run_args += "--device /dev/nvidia-uvm "
+	run_args += "-v /var/run/dbus/system_bus_socket:/var/run/dbus/system_bus_socket:ro "
+	run_args += "-v /usr/lib/nvidia-361-prime:/h1_64:ro "
+	run_args += "-v /usr/lib/nvidia-340:/h2_64:ro "
+	run_args += "-v /usr/lib/nvidia-340-prime:/h3_64:ro "
+	run_args += "-v /usr/lib/nvidia-304:/h4_64:ro "
+	run_args += "-v /usr/lib32/nvidia-361:/h5_32:ro "
+	run_args += "-v /usr/lib32/nvidia-340:/h6_32:ro "
+	run_args += "-v /usr/lib32/nvidia-304:/h7_32:ro "
+	run_args += "-v /usr/lib/x86_64-linux-gnu:/h8_64:ro "
+	run_args += "-v /usr/lib/i386-linux-gnu:/h9_32:ro "
+	run_args += "-v /run/dbus/:/run/dbus/:rw -v /dev/shm:/dev/shm "
+	run_args += "--group-add audio "
+	run_args += "--group-add video "
 	run_args += "--privileged "
 	run_args += "--detach "
 	run_args += "--publish-all "
@@ -156,7 +180,7 @@ def sandbox_command_build():
 	sandbox_build_base(path=DIR)
 	if args.apt != None:
 		sandbox_build_apt()
-	
+
 def sandbox_command_new():
 	if not sandbox_started():
 		sandbox_start()
@@ -168,7 +192,7 @@ def sandbox_ssh():
 	if "arguments" in args:
 		arguments = " ".join(args.arguments)
 	os.environ["ENTRYPATH"] = ENTRYPATH
-	return subprocess.call("ssh -Y -p %d %s %s %s" % (container_port(22), SSH_OPTS, SSH_HOST, arguments), shell = True)
+	return subprocess.call("ssh -t -Y -p %d %s %s %s 2> /dev/null" % (container_port(22), SSH_OPTS, SSH_HOST, arguments), shell = True)
 
 def sandbox_command_run():
 	if not sandbox_started():
@@ -181,7 +205,7 @@ def sandbox_inspect_images():
 	return subprocess.check_output(cmd, shell = True).decode("utf-8").split()
 
 def sandbox_inspect_container(image):
-	cmd = "docker ps -a | sed -n '/sandbox:%s/s/ \+/ /gp' | rev | cut -d ' ' -f 2 | rev" % (image)
+	cmd = "docker ps -a | sed -n '/sandbox:%s/s/ \+/ /gp' | rev | cut -d ' ' -f 1 | rev" % (image)
 	return subprocess.check_output(cmd, shell = True).decode("utf-8").split()
 
 
